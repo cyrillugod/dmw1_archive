@@ -10,6 +10,7 @@ import csv
 import json
 import re
 import os
+from scipy.spatial.distance import mahalanobis
 
 
 # In[2]:
@@ -596,4 +597,414 @@ def download_images(url):
         img_fname = basename(urlparse(img).path)
         with open(os.path.join('images', img_fname), 'wb') as f:
             f.write((requests.get(img)).content)
+
+
+# In[13]:
+
+
+def label_encode(ord_values, value_mapping):
+    '''Returns label encoded values of ordinal values.'''
+    return [value_mapping.get(i) for i in ord_values]
+
+
+# In[14]:
+
+
+def onehot_encode(cat_values):
+    """Returns a DataFrame of one-hot encoded values from a list of
+    categorical values.
+    """
+    df = pd.get_dummies(cat_values)
+    if len(list(set(cat_values))) < 3:
+        df.drop(columns=f'{sorted(cat_values)[0]}', inplace=True)
+    return df
+
+
+# In[15]:
+
+
+def vectorize_people(people, value_mappings):
+    """
+    Returns a DataFrame of the design matrix for a list of dictionaries
+    of people and a dictionary of mappings for ordinal values.
+    """
+    df = pd.DataFrame(people)
+    keyskeys = list(value_mappings.keys())[0]
+    df2 = df.replace({keyskeys: value_mappings.get(keyskeys)})
+    df2 = pd.get_dummies(df2)
+    to_rm = sorted(list(set(df2.columns).difference(df.columns)))[0]
+    df2.drop(columns=to_rm, inplace=True)
+    df2 = df2[sorted(df2.columns.tolist())]
+    return df2
+
+
+# In[16]:
+
+
+def get_wine_df(data_wine):
+    """Returns a DataFrame design matrix of a Bunch object."""
+    return pd.DataFrame(data=data_wine.data, columns=data_wine.feature_names)
+
+
+# In[17]:
+
+
+def to_bow(docs):
+    """
+    Returns a DataFrame with a BoW representation of a list of documents.
+    """  
+    cnt_list = []
+    for d in docs:
+        cnt = dict(Counter(d.lower().split()))
+        cnt_list.append(cnt)
+    df = pd.DataFrame(cnt_list).fillna(0)
+    df = df[sorted(df.columns)]
+    return df
+
+
+# In[18]:
+
+
+def lpnorm(vec1, vec2, p=2):
+    """Compute the L_p-norm distance between vec1 and vec2
+    
+    If `vec1` and `vec2` are same-sized matrices, an ndarray of the L_p-norm 
+    of corresponding rows will be returned instead.
+    
+    Parameters
+    ----------
+    vec1 : ndarray
+        First vector
+    vec2 : ndarray
+        Second vector
+    p : int or float, optional
+        Order of L_p norm; the `p` in L_p norm
+        
+    Returns
+    -------
+    float
+        L_p norm distance of `vec1` and `vec2`
+    """
+    return (np.sum((np.abs(vec1 - vec2)) ** p, axis=vec1.ndim - 1)) ** (1/p)
+
+
+# In[19]:
+
+
+def cossim(vec1, vec2):
+    """Compute cosine similarity between vec1 and vec2
+    
+    If `vec1` and `vec2` are same-sized matrices, an ndarray of the cosine 
+    similarity of corresponding rows will be returned instead.
+    
+    Parameters
+    ----------
+    vec1 : ndarray
+        First vector
+    vec2 : ndarray
+        Second vector
+        
+    Returns
+    -------
+    float
+        cosine similarity of `vec1` and `vec2`
+    """
+    if (vec1.ndim > 1) & (np.shape(vec1) == np.shape(vec2)):
+        sim = ([(np.dot(vec1[i], vec2[i])/(np.linalg.norm(vec1[i]) 
+                                        * np.linalg.norm(vec2[i]))) 
+                                             for i in range(vec1.ndim)])
+    else:
+        sim = (np.dot(vec1, vec2)/(np.linalg.norm(vec1) 
+                                        * np.linalg.norm(vec2)))
+    return sim
+
+
+# In[20]:
+
+
+def dcos(vec1, vec2):
+    """Compute cosine distance between vec1 and vec2
+    
+    If `vec1` and `vec2` are same-sized matrices, an ndarray of the cosine 
+    distance of corresponding rows will be returned instead.
+    
+    Parameters
+    ----------
+    vec1 : ndarray
+        First vector
+    vec2 : ndarray
+        Second vector
+        
+    Returns
+    -------
+    float
+        cosine distance of `vec1` and `vec2`
+    """
+    if (vec1.ndim > 1) & (np.shape(vec1) == np.shape(vec2)):
+        dis = 1 - ([(np.dot(vec1[i], vec2[i])/(np.linalg.norm(vec1[i]) 
+                                        * np.linalg.norm(vec2[i]))) 
+                                             for i in range(vec1.ndim)])
+    else:
+        dis = 1 - (np.dot(vec1, vec2)/(np.linalg.norm(vec1) 
+                                        * np.linalg.norm(vec2)))
+    return dis    
+
+
+# In[36]:
+
+
+def mahal(vec1, vec2, data):
+    """Returns the Mahalanobis distance of an object.
+    Argument 'data' should be an array of dataset."""
+    try:
+        VI = np.linalg.inv(np.cov(data.T))
+    
+    except:
+        VI = np.linalg.pinv(np.cov(data.T))
+    
+    return mahalanobis(vec1, vec2, VI=VI)
+
+
+# In[22]:
+
+
+def nearest_k(query, objects, k, dist):
+    """Return the indices to objects most similar to query
+    
+    Parameters
+    ----------
+    query : ndarray
+        query object represented in the same form vector representation as the
+        objects
+    objects : ndarray
+        vector-represented objects in the database; rows correspond to 
+        objects, columns correspond to features
+    k : int
+        number of most similar objects to return
+    dist : function
+        accepts two ndarrays as parameters then returns their distance
+    
+    Returns
+    -------
+    ndarray
+        Indices to the most similar objects in the database
+    """
+    dist_list = np.array([dist(query, objects[i])
+                          for i in range(len(objects))])
+    return np.argsort(dist_list)[:k]
+
+
+# In[23]:
+
+
+class Vectorizer:
+    def __init__(self):
+        self.index_word = {}
+        self.word_index = {}
+        
+    def build_mappings(self, docs):
+        """Initialize word-index mappings
+        
+        Parameter
+        ---------
+        docs : sequence of str
+            Corpus to build mappings for
+        """
+        word_list = sorted(set((' '.join(docs)).lower().split()))
+        self.index_word = {i: v for i, v in enumerate(word_list)}
+        self.word_index = {v: k for k, v in enumerate(word_list)}
+        self.word_list = word_list
+        
+
+    def vectorize(self, doc):
+        """Return the BoW vector representation of doc
+        
+        Parameters
+        ----------
+        doc : str
+            Text to compute the vector representation of
+            
+        Returns
+        -------
+        vec : ndarray
+            BoW vector representation of doc
+        """
+        # YOUR CODE HERE
+        vec_dic = {k: 0 for k, v in self.word_index.items()}
+        cnt = Counter(doc.lower().split())
+        for k, v in cnt.items():
+            if k in vec_dic.keys():
+                vec_dic[k] = cnt[k]
+        vec = np.array(list(vec_dic.values()))
+        return vec
+
+
+# In[24]:
+
+
+def get_confusion(actual, results, all_labels):
+    """Returns a confusion matrix from a list of results."""
+    tp = sum([1 for i in results if all_labels[i] == actual])
+    fp = sum([1 for i in results if all_labels[i] != actual])
+    fn = sum([1 for i, v in enumerate(all_labels)
+                  if i not in results and v == actual])
+    tn = sum([1 for i, v in enumerate(all_labels)
+                  if i not in results and v != actual])
+    return pd.DataFrame({'relevant': [tp, fn], 'irrelevant': [fp, tn]},
+                        index=['relevant', 'irrelevant'])
+
+
+# In[25]:
+
+
+def nearest_k(query, objects, k, dist):
+    """Return the indices to objects most similar to query
+    
+    Parameters
+    ----------
+    query : ndarray
+        query object represented in the same form vector representation as the
+        objects
+    objects : ndarray
+        vector-represented objects in the database; rows correspond to 
+        objects, columns correspond to features
+    k : int
+        number of most similar objects to return
+    dist : function
+        accepts two ndarrays as parameters then returns their distance
+    
+    Returns
+    -------
+    most_similar : ndarray
+        Indices to the most similar objects in the database
+    """
+    return np.argsort([dist(query, obj) for obj in objects])[:k]
+
+
+# In[26]:
+
+
+def precision(confusion):
+    """Returns the precision of a confusion matrix."""
+    return confusion.iloc[0][0] / sum(confusion.iloc[0])
+
+
+# In[27]:
+
+
+def recall(confusion):
+    """Returns the recall of a confusion matrix."""
+    return confusion['relevant'][0] / sum(confusion['relevant'])
+
+
+# In[28]:
+
+
+def f_measure(precision, recall, beta=1):
+    """Returns the f-measure for a given precision, recall, and beta value."""
+    return ((1 + (beta ** 2)) 
+                * ((precision * recall) / ((beta ** 2) * precision + recall)))
+
+
+# In[30]:
+
+
+def pr_curve(query, objects, dist, actual, all_labels):
+    '''
+    Generates a PR curve of the objects in the database.
+    '''
+    all_labels = np.asarray(all_labels)
+    results = nearest_k(query, objects, len(all_labels), dist)
+    rs = (all_labels[results] == actual).cumsum()
+    N = (all_labels == actual).sum()
+    precisions = rs / np.arange(1, len(rs)+1)
+    recalls = rs / N
+    recalls = [0] + recalls.tolist()
+    precisions = [1] + precisions.tolist()
+
+    fig, ax = plt.subplots()
+    ax.set_aspect('equal')
+    ax.step(recalls, precisions, where='post')
+    ax.fill_between(recalls, precisions, step='post', alpha=0.8)
+    ax.set_xlim(0,1)
+    ax.set_ylim(0,1)
+    ax.set_xlabel('recall')
+    ax.set_ylabel('precision');
+    return ax
+
+
+# In[31]:
+
+
+def auc_pr(query, objects, dist, actual, all_labels):
+    """Returns the area under the PR curve."""
+    all_labels = np.asarray(all_labels)
+    results = nearest_k(query, objects, len(all_labels), dist)
+    rs = (all_labels[results] == actual).cumsum()
+    N = (all_labels == actual).sum()
+    precisions = rs / np.arange(1, len(rs)+1)
+    recalls = rs / N
+    recalls = [0] + recalls.tolist()
+    precisions = [1] + precisions.tolist()
+
+    area = np.trapz(precisions, recalls)
+    return area
+
+
+# In[32]:
+
+
+class Standardizer:
+    def __init__(self, df):
+        """Store the mean and standard deviation of each column"""
+        self.mean = df.mean()
+        self.std = df.std()
+        self.df = df
+        
+    def standardize(self, values):
+        """Standardize values per column"""
+        return (values - self.mean) / self.std
+
+
+# In[33]:
+
+
+class MinMax:
+    def __init__(self, df):
+        """Store the minimum and maximum values of each column"""
+        self.min = df.min()
+        self.max = df.max()
+        
+    def minmax(self, values):
+        """Standard values per column"""
+        return (values - self.min) / (self.max - self.min)
+
+
+# In[34]:
+
+
+class TFIDF:
+    def __init__(self, df):
+        """Store the idf of each column"""
+        self.weights = np.log(len(df) / (df!=0).sum())
+        
+    def tfidf(self, values):
+        """Standard values per column"""
+        return values * self.weights
+
+
+# In[35]:
+
+
+def normalize1(values):
+    """Normalizes values by the L1-norm."""
+    return values/np.linalg.norm(values, ord=1, axis=-1, keepdims=True)
+
+
+# In[39]:
+
+
+def normalize2(values):
+    """Normalizes values by the L2-norm."""
+    return values/np.linalg.norm(values, axis=-1, keepdims=True)
 
