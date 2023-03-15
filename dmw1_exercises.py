@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[14]:
+# In[12]:
 
 
 import pandas as pd
@@ -9,6 +9,7 @@ import numpy as np
 import csv
 import json
 import re
+import os
 
 
 # In[2]:
@@ -414,8 +415,185 @@ def del_row(conn):
     """)
 
 
-# In[ ]:
+# In[1]:
 
 
+def summarize_items():
+    """Returns a DataFrame corresponding to the OASIS Item Summary table."""
+    url = 'https://jojie.accesslab.aim.edu:9095/oasis/oi_item_summary.html'
+    list_df = pd.read_html(url, header=0)
+    return list_df[0]
 
+
+# In[2]:
+
+
+def item_values():
+    """Returns a DataFrame corresponding to the OASIS Item Values table."""
+    url = 'https://jojie.accesslab.aim.edu:9095/oasis/oi_d0700.html'
+    list_df = pd.read_html(url, header=1)
+    return list_df[2]
+
+
+# In[3]:
+
+
+def all_item_values():
+    """Returns a DataFrame of all items values."""
+    url = ('https://jojie.accesslab.aim.edu:9095'
+                    '/oasis/oi_item_summary.html')
+    response = requests.get(url)
+    soup = bs4.BeautifulSoup(response.text)
+    url_list= ([(i.text.strip(), urljoin(url, i.get('href'))) 
+                for i in soup.select('a[href]')])
+    df_list = []
+    for text, url_ in url_list:
+        df_item_val = pd.read_html(url_, match='Item Value', header=1)[0]
+        df_item_val.insert(loc=0, column='Item', value=text)
+        df_list.append(df_item_val)
+    return pd.concat(df_list, ignore_index=True)
+
+
+# In[4]:
+
+
+def all_item_edits():
+    """Returns ID, Type, Severity, and Text of all OASIS edits."""
+    url = 'https://jojie.accesslab.aim.edu:9095/oasis/'
+    soup = bs4.BeautifulSoup((requests.get(url)).content)
+    url = urljoin(url, soup.select_one('frame').get('src'))
+    soup = bs4.BeautifulSoup((requests.get(url)).content)
+    url = urljoin(url, soup.select_one('a[href^=oe]').get('href'))
+    soup = bs4.BeautifulSoup((requests.get(url)).content)
+    url = urljoin(url, soup.select_one('a[href^=oe_edit]').get('href'))
+    df = pd.read_html(url, header=0)[0]
+    soup = bs4.BeautifulSoup((requests.get(url)).content)
+    edit_list = [e.get('href') for e in soup.select('a[href]')]
+    list_text = []
+    for edit in edit_list:
+        oe_html = urljoin(url, edit)
+        df_oe = pd.read_html(oe_html, header=0)[1]
+        edit_text = (df_oe[df_oe['Property'] == 'Edit Text']['Specification']
+                         .values[0])
+        list_text.append(edit_text)
+    df['Edit Text'] = list_text
+    df.rename(columns={'Type': 'Edit Type'}, inplace=True)
+    return df.sort_values(by='Edit ID', ignore_index=True, ascending=False)
+
+
+# In[5]:
+
+
+def article_info(url):
+    """Returns the title, author, and published timestamp from Rappler.com."""
+    dic_art = {}
+    response = requests.get(url)
+    soup = bs4.BeautifulSoup(response.text)
+    title = soup.select_one("div.post-single__header h1").text
+    dic_art['title'] = title
+    author = soup.select_one("div.post-single__authors").text
+    dic_art['author'] = author
+    published = soup.select_one("span.posted-on > time").text
+    dic_art['published'] = published    
+    return dic_art
+
+
+# In[6]:
+
+
+def latest_news():
+    """Returns title, category, and timestamp of latest news from Rappler."""
+    latest_dict = {}
+    url = 'https://jojie.accesslab.aim.edu:9095/rappler/'
+    response = requests.get(url)
+    soup = bs4.BeautifulSoup(response.text)
+    title = soup.select_one('div.latest-stories h3 a[href]').text.strip()
+    latest_dict['title'] = title
+    art_url = (urljoin(
+        url, soup.select_one('div.latest-stories h3 a[href]').get('href')))
+    resp_latest = requests.get(art_url)
+    soup_latest = bs4.BeautifulSoup(resp_latest.text)
+    category = (soup_latest.select_one('div.post-single__header a[href]')
+                .text.strip())
+    latest_dict['category'] = category
+    date_string = soup_latest.select_one('time').get('datetime')
+    timestamp = (datetime.datetime.strptime(
+        date_string, '%Y-%m-%dT%H:%M:%S%z')
+                 .astimezone(datetime.timezone.utc))
+    latest_dict['timestamp'] = timestamp
+    return latest_dict
+
+
+# In[7]:
+
+
+def get_category_posts(category):
+    """Returns titles of posts from Rappler by category."""
+    url = 'https://jojie.accesslab.aim.edu:9095/rappler/'
+    response = requests.get(url)
+    soup = bs4.BeautifulSoup(response.text)
+    categ_dict = {}
+    list_cat = [i.text.strip() for i in soup.select('a.post-card__category')]
+    list_tit = [i.text.strip() for i in soup.select('h3.post-card__title')]
+    df = pd.DataFrame({"category": list_cat, "titles": list_tit})
+    df['category'] = df['category'].str.lower()
+    df = df.groupby('category')['titles'].unique()
+    return [e for e in df[category.lower()].tolist() if 'LIVE' not in e]
+
+
+# In[8]:
+
+
+def subsection_posts(url):
+    """Returns a DataFrame of title and timestamp of posts in a subsection."""
+    response = requests.get(url)
+    soup = bs4.BeautifulSoup(response.content)
+    title_list = ([e.text.strip() for e in soup.select(
+        'div.archive-article__content h2 a[href]')])
+    timestamp_list = ([d.text.strip() for d in soup.select(
+        'div.archive-article__content time')])
+    df = pd.DataFrame({'title': title_list, 'timestamp': timestamp_list})
+    return df
+
+
+# In[9]:
+
+
+def subsection_authors(url):
+    """Returns a DataFrame of title and author of posts under a subsection."""
+    proxies = {
+    'http': 'http://206.189.157.23'
+    }
+    response = requests.get(url, proxies=proxies)
+    soup = bs4.BeautifulSoup(response.content)
+    title_list = ([e.text.strip() for e in soup.select(
+        'div.archive-article__content h2 a[href]')])
+    art_list = ([e.get('href') for e in soup.select(
+        'div.archive-article__content h2 a[href]')])
+    auth_list = []
+    for art in art_list:
+        soup_art = (bs4.BeautifulSoup(
+            requests.get(art, proxies=proxies).content))
+        auth_list.append(soup_art.select_one('.post-single__authors').text)
+    timestamp_list = ([d.text.strip() for d in soup.select(
+        'div.archive-article__content time')])
+    df = pd.DataFrame({'title': title_list, 'author': auth_list})
+    return df.sort_values(by='title', ignore_index=True)
+
+
+# In[11]:
+
+
+def download_images(url):
+    """Downloads post images to 'images' directory from Rappler subsection."""
+    response = requests.get(url)
+    soup = bs4.BeautifulSoup(response.content)
+    img_list = ([e.get('src') 
+                 for e in soup.select('figure.archive-article-image img')])
+    if not os.path.isdir('./images'):
+        os.mkdir('./images')
+    for img in img_list:
+        img_fname = basename(urlparse(img).path)
+        with open(os.path.join('images', img_fname), 'wb') as f:
+            f.write((requests.get(img)).content)
 
